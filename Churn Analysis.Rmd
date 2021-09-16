@@ -1,0 +1,484 @@
+---
+title: "Customer Churn Analysis"
+author: "Alphonzo Smith"
+date: "5/3/2021"
+output: 
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(patchwork)
+```
+
+
+# Data Import and Summary 
+```{r echo=TRUE}
+raw <- read_csv("C:/R/win-library/R-Practice/Data/churn_customer.csv",
+  col_types = cols(CustomerSince = col_datetime("%m/%d/%y %I:%M %p")))
+str(raw)
+```
+
+```{r echo = TRUE}
+summary(raw)
+```
+
+
+```{r echo = TRUE}
+raw %>% is.na %>% colMeans
+```
+
+# Scaler
+```{r echo = true}
+
+scaler <- readRDS("C:/Users/alsjr/OneDrive/Documents/College Classes/Info 400/Final Documents/customer-churn-project/rds/churn_scaler.rds")
+
+print(scaler)
+
+```
+
+#Load Model and Scaler to make Predictions 
+```{r echo = true}
+
+my_model <- readRDS("C:/Users/alsjr/OneDrive/Documents/College Classes/Info 400/Final Documents/customer-churn-project/rds/linear_model.rds")
+
+scaler <- readRDS("C:/Users/alsjr/OneDrive/Documents/College Classes/Info 400/Final Documents/customer-churn-project/rds/churn_scaler.rds")
+
+new_data <- tibble(Technology4G=c(1, 0),
+            Technologyfiber=c(0, 0),
+            Technologylandline=c(0, 1),
+            Technologyphone=c(0, 0),
+            Age=c(35, 65),
+            SupportCallsLastYear=c(2, 10),
+            AverageBill=c(70, 40),
+            duration=c(300, 1200))
+
+# Scale Data 
+X <- predict(scaler, new_data)
+
+#Predict
+predict(my_model, X)
+
+```
+
+
+
+# Data Binning of the Churn Indicator
+
+```{r echo = TRUE}
+
+summary(raw$ChurnIndicator)
+
+```
+
+
+```{r echo =TRUE}
+
+# 1 2 3 4 5 6,  [1,3) 1 close 3 open, [3],  (3, 6]
+
+temp <- hist(raw$ChurnIndicator,
+     breaks = c(0.0,0.1, 1.204),
+     right= TRUE,
+     freq=TRUE,
+     col="burlywood",
+     main="ChurnIndicator",
+     xlab="", ylab="frequency")
+```
+
+```{r echo = TRUE}
+temp$counts
+```
+
+# Creating a Nominal Variable and adding it to a New Dataframe 
+
+```{r echo = TRUE}
+
+map <- c("0", "1")
+breaks <- c(0, 0.1, 1.204)
+
+x <- raw$ChurnIndicator
+y_ch <- ifelse(x <= breaks[3], map[1], map[2])
+
+churn_cat <- cut(x,
+                 breaks = breaks,
+                 include.lowest = TRUE,
+                 right = FALSE,
+                 labels = map,
+                 ordered_result = FALSE)
+
+```
+
+
+
+```{r echo = TRUE}
+
+churn <- raw %>% add_column(churn_cat = churn_cat)
+
+str(churn)
+
+
+```
+
+
+# Plotting New DataFrame colored by churn_cat of ChurnIndicator
+
+```{r echo = TRUE}
+
+churn %>% 
+  ggplot(aes(x=ChurnIndicator)) +
+  geom_bar(aes(fill=churn_cat, na.rm = TRUE))+
+  scale_y_log10() +
+  ggtitle("Frequency in log10")+
+  labs(y="")
+
+```
+
+# Feature Engineering 
+
+```{r echo = TRUE}
+
+churn <- churn %>% mutate(duration = 
+                 as.numeric(difftime(ymd_hms("2016-01-01 00:00:00"), CustomerSince, units="days"))
+               )
+summary(churn$duration)
+
+```
+
+```{r echo = TRUE}
+
+max(churn$duration)
+
+min(churn$duration)
+
+```
+
+
+# Feature Scaling
+
+```{r echo=TRUE}
+
+library(caret)
+num_attr <- churn %>%
+  select(where(is.numeric)) %>% 
+  select(-ChurnIndicator) 
+
+scaler <- preProcess(num_attr, method=c("range"))
+num_attr_scale <- predict(scaler, num_attr)
+
+```
+
+```{r echo=TRUE}
+
+churn_norm <- tibble(Technology=churn$Technology, 
+                     num_attr_scale,
+                     ChurnIndicator=churn$ChurnIndicator,
+                     churn_cat=churn$churn_cat)
+str(churn_norm)
+
+```
+
+# Exploratory Data Analysis
+
+```{r echo=TRUE}
+
+group <- churn %>% 
+  select(where(is.numeric)) %>%
+  pivot_longer(everything())
+
+group %>% ggplot() +
+  geom_histogram(mapping =aes(x = value), color='white', fill='seagreen', alpha=0.6) +
+  facet_wrap(vars(name), scales = "free")+
+  labs(x="", y="")
+
+
+```
+
+# Relationship Between Loyalty and Number of Calls
+
+```{r echo=TRUE}
+
+churn_norm %>% ggplot(aes(x=SupportCallsLastYear, y=ChurnIndicator)) +
+  geom_point(aes(color=Technology, size=0.1, alpha=0.1)) +
+  geom_jitter(aes(color=Technology, alpha=0.1)) +
+  theme_minimal() +
+  theme(legend.position="bottom") +
+  labs(x="",y="") +
+  ggtitle("ChurnIndicator (y axis) vs. SupportCallsLastYear (x axis)")
+
+```
+
+# Relationship Between Loyalty and Age
+
+```{r echo=TRUE}
+
+churn_norm %>% ggplot(aes(x=Age, y=ChurnIndicator)) +
+  geom_point(aes(color=Technology, size = 0.1, alpha=0.1)) +
+  geom_jitter(aes(color=Technology, alpha=0.1)) +
+  theme_minimal() +
+  theme(legend.position="bottom")
+  labs(x="Age", y="ChurnIndicator")
+
+```
+
+# Relationship between Loyalty and Average Bill
+
+```{r echo=TRUE}
+
+churn_norm %>% ggplot(aes(x=AverageBill, y= ChurnIndicator)) +
+  geom_point(aes(color = Technology, size = 0.1, alpha=0.1)) +
+  geom_jitter(aes(color=Technology, alpha=0.1)) +
+  theme_minimal() +
+  theme(legend.position="bottom") +
+  ggtitle("ChurnIndicator (y) vs. AverageBill (x)") +
+  xlab("") + ylab("")
+
+```
+
+
+# Relationship Between Loyalty and Technology
+
+```{r echo=TRUE}
+
+churn_norm %>% 
+  ggplot(aes(x=Technology, y=ChurnIndicator)) +
+    geom_violin(aes(fill=Technology), trim=TRUE) +
+    xlab("") + ylab("") +
+    theme(legend.position="none") +
+    guides(fill=FALSE) +
+    ggtitle("ChurnIndicator across Technology groups") +
+    theme_classic() +
+    coord_flip()
+
+```
+# Correlation Analysis 
+
+## Calculate Correlation Coefficients
+```{r echo = true}
+
+library(polycor)
+corr <- hetcor(churn_norm)
+
+corr$correlations
+
+```
+
+
+#Visualization of Correlation in both direction and strength
+```{r echo = true}
+
+library(corrplot)
+corrplot(corr$correlations, 
+         order = "hclust", 
+         addrect = 2, 
+         col = c("white", "black"), 
+         bg = "gold2")
+
+```
+
+#Rank the Variables by Correlation
+```{r echo = true}
+
+corrmat <- as_tibble(corr$correlations)
+corrmat <- corrmat %>% mutate(attribute=colnames(corrmat)) 
+rank <- corrmat %>%
+  select(attribute, ChurnIndicator) %>%
+  mutate(abs.correlation=abs(ChurnIndicator)) %>%
+  arrange(desc(abs.correlation))
+
+# Print the rank
+rank
+
+```
+
+```{r echo = true}
+
+rank$attribute
+
+```
+
+```{r echo = true}
+
+rank %>% ggplot(aes(x=fct_reorder(attribute,abs.correlation), y=abs.correlation)) +
+  geom_point(aes(color=ChurnIndicator), alpha=0.5, size=4) +
+  xlab("") + ylab("abs(correlation)") +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+# One hot encoding
+```{r echo = true}
+
+library(caret)
+dummifier <- dummyVars(" ~ Technology", data=churn_norm)
+dummy <- as_tibble(predict(dummifier, churn_norm))
+
+```
+
+```{r echo = true}
+
+churn_norm <- churn_norm %>% 
+  add_column(dummy, .after ="Technology") 
+str(churn_norm)  
+
+```
+
+# Reranking after dummify
+```{r echo = true}
+
+library("polycor")
+corr <- hetcor(churn_norm)
+corrmat <- as_tibble(corr$correlations)
+corrmat <- corrmat %>% 
+  mutate(attribute=colnames(corrmat)) 
+rank <- corrmat %>%
+  select(attribute, ChurnIndicator) %>%
+  mutate(abs.correlation=abs(ChurnIndicator)) %>%
+  arrange(desc(abs.correlation))
+
+# Print the rank
+rank
+
+```
+
+```{r echo = true}
+
+rank %>% 
+  ggplot(aes(x=fct_reorder(attribute,abs.correlation), y=abs.correlation)) +
+  geom_point(aes(color=ChurnIndicator), alpha=0.5, size=4) +
+  xlab("") + ylab("abs(correlation)") +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+#Model Fitting
+
+## Splitting data into two subsets
+```{r echo = true}
+
+library(caret)
+trainIndex <- createDataPartition(churn_norm$ChurnIndicator, 
+                                  p = .70, 
+                                  list = FALSE, 
+                                  times = 1)
+
+## Split the data using the defined partition
+train_set <- churn_norm[trainIndex,]
+X_train <- train_set %>% select(-c(Technology, churn_cat, ChurnIndicator))
+y_train <- train_set$ChurnIndicator
+
+test_set <- churn_norm[-trainIndex,]
+X_test <- test_set %>% select(-c(Technology, churn_cat, ChurnIndicator))
+y_test <- test_set$ChurnIndicator
+
+```
+
+## caret::train
+```{r echo = true}
+
+#lm
+
+#base <- lm(ChurnIndicator ~. -Technology-churn_cat, train_set)
+linear <- train(y = y_train,
+                x = X_train,
+                method = 'lm',
+                metric =  "Rsquared"
+              )
+
+```
+
+```{r echo = true}
+
+#ridge
+
+library(glmnet)
+parameters <- c(seq(0.1, 2, 0.1), seq(2, 5, 0.5), seq(5, 25, 1))
+ridge <- train(y = y_train,
+               x = X_train,
+               method = 'glmnet',
+               tuneGrid = expand.grid(alpha = 0, lambda = parameters),
+               metric = "Rsquared")
+
+```
+
+#Model Testing
+```{r echo = true}
+
+truth <- y_test
+prediction1 <- predict(linear, X_test) 
+prediction2 <- predict(ridge, X_test) 
+
+library(patchwork)
+p1 = ggplot()+
+  geom_point(aes(x=seq(1:length(truth)), y=truth), color="tomato", alpha=0.3) +
+  geom_point(aes(x=seq(1:length(prediction1)), y=prediction1), color="burlywood", alpha=0.3) +
+  ylab("") + xlab("") + theme_classic() +
+  ggtitle("linear & lasso")
+
+p2 = ggplot()+
+  geom_point(aes(x=seq(1:length(truth)), y=truth), color="tomato", alpha=0.3) +
+  geom_point(aes(x=seq(1:length(prediction2)), y=prediction2), color="seagreen", alpha=0.3) +
+  ylab("") + xlab("") + theme_classic() 
+
+p1 / p2
+
+```
+
+#R Squared
+```{r echo = true}
+
+c(R2(prediction1, y_test), R2(prediction2, y_test))
+
+```
+
+#Print the Models
+```{r echo = true}
+
+vars <- rownames(as.matrix(coef(ridge$finalModel, ridge$finalModel$lambdaOpt)))
+ridge_weight <-  as.matrix(coef(ridge$finalModel, ridge$finalModel$lambdaOpt))["1"]
+linear_weight <- linear$finalModel$coefficients
+
+tibble(vars, ridge_weight, linear_weight) 
+
+```
+
+#Model Deployment 
+```{r echo = true}
+
+X_raw <- tibble(Technology4G=c(1),
+            Technologyfiber=c(0),
+            Technologylandline=c(0),
+            Technologyphone=c(0),
+            Age=c(35),
+            SupportCallsLastYear=c(2),
+            AverageBill=c(70),
+            duration=c(300))
+# Scale data
+X <- predict(scaler, X_raw)
+# Predict
+c(predict(linear, X), predict(ridge, X))
+
+```
+
+#Variable Importance 
+```{r}
+
+mod2 <- train(ChurnIndicator ~. -Technology-churn_cat,
+               data = churn_norm,
+               method = "lm")
+
+```
+
+```{r echo = true}
+
+ggplot(varImp(mod2)) + theme_classic()
+
+```
+
